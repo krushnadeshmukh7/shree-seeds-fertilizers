@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shree-seeds
+  namespace: shree-seeds
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: shree-seeds
+  template:
+    metadata:
+      labels:
+        app: shree-seeds
+    spec:
+      containers:
+      - name: app
+        image: YOUR_ACCOUNT_ID.dkr.ecr.us-west-2.amazonaws.com/shree-seeds-fertilizers:1
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DB_URL
+          valueFrom:
+            configMapKeyRef:
+              name: shree-seeds-config
+              key: DB_URL
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: shree-seeds-secret
+              key: DB_USERNAME
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: shree-seeds-secret
+              key: DB_PASSWORD
+        resources:
+          requests: { cpu: "250m", memory: "512Mi" }
+          limits: { cpu: "500m", memory: "1Gi" }

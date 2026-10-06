@@ -1,0 +1,31 @@
+pipeline {
+    agent { label 'worker' }
+
+    tools {
+        terraform 'terraform'
+    }
+
+    stages {
+        stage('Checkout') {
+            steps { checkout scm }
+        }
+        stage('Terraform Init') {
+            steps { dir('terraform') { sh 'terraform init' } }
+        }
+        stage('Validate') {
+            steps { dir('terraform') { sh 'terraform validate' } }
+        }
+        stage('Plan') {
+            steps { dir('terraform') { sh 'terraform plan' } }
+        }
+        stage('Apply') {
+            steps { dir('terraform') { sh 'terraform apply -auto-approve' } }
+        }
+    }
+
+    post {
+        success {
+            build job: 'shree-seeds-app', wait: true
+        }
+    }
+}
