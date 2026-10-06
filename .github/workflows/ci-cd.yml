@@ -1,1 +1,113 @@
+steps:
 
+  - name: Checkout Code
+    uses: actions/checkout@v7
+
+  - name: Setup Java
+    uses: actions/setup-java@v6
+    with:
+      java-version: '21'
+      distribution: 'temurin'
+      cache: maven
+
+  - name: Build Application
+    run: |
+      mvn clean package -DskipTests
+
+  - name: Check Build Artifact
+    run: |
+      ls -lh target/
+      jar tf target/*.jar | head
+
+  - name: Configure AWS Credentials
+    uses: aws-actions/configure-aws-credentials@v6
+    with:
+      aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      aws-region: us-west-2
+
+  - name: Upload Artifact to S3
+    run: |
+      aws s3 cp target/*.jar s3://shree-seeds-fertilizers-krushna/Artifacts/shree-seeds-fertilizers.jar
+
+  - name: SonarQube Analysis
+    run: |
+      mvn sonar:sonar \
+        -Dsonar.projectKey=shree-seeds-fertilizers \
+        -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
+        -Dsonar.token=${{ secrets.SONAR_TOKEN }}
+
+  - name: SonarQube Quality Gate
+    run: |
+      sudo apt-get update
+      sudo apt-get install -y jq
+
+      STATUS=$(curl -s \
+        -u "${{ secrets.SONAR_TOKEN }}:" \
+        "${{ secrets.SONAR_HOST_URL }}/api/qualitygates/project_status?projectKey=shree-seeds-fertilizers" \
+        | jq -r '.projectStatus.status')
+
+      echo "SonarQube Quality Gate: $STATUS"
+
+      if [ "$STATUS" != "OK" ]; then
+        echo "Quality Gate Failed"
+        exit 1
+      fi
+
+  - name: Build Docker Image
+    run: |
+      docker build -t shree-seeds-fertilizers:latest .
+
+  - name: Install Trivy
+    run: |
+      sudo apt-get update
+      sudo apt-get install -y wget apt-transport-https gnupg lsb-release
+
+      wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | \
+        gpg --dearmor | \
+        sudo tee /usr/share/keyrings/trivy.gpg > /dev/null
+
+      echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | \
+        sudo tee /etc/apt/sources.list.d/trivy.list
+
+      sudo apt-get update
+      sudo apt-get install -y trivy
+
+  - name: Trivy Image Scan
+    run: |
+      trivy image --severity HIGH,CRITICAL shree-seeds-fertilizers:latest
+
+  - name: Login to Amazon ECR
+    run: |
+      aws ecr get-login-password --region us-west-2 | \
+        docker login \
+          --username AWS \
+          --password-stdin \
+          267850879086.dkr.ecr.us-west-2.amazonaws.com
+
+  - name: Tag Docker Image
+    run: |
+      docker tag \
+        shree-seeds-fertilizers:latest \
+        267850879086.dkr.ecr.us-west-2.amazonaws.com/shree-seeds-fertilizers:latest
+
+  - name: Push Docker Image to ECR
+    run: |
+      docker push \
+        267850879086.dkr.ecr.us-west-2.amazonaws.com/shree-seeds-fertilizers:latest
+
+  - name: Update EKS Kubeconfig
+    run: |
+      aws eks update-kubeconfig \
+        --region us-west-2 \
+        --name shree-seeds-eks
+
+  - name: Deploy to Kubernetes
+    run: |
+      kubectl apply -f k8s/
+
+  - name: Check Kubernetes Deployment
+    run: |
+      kubectl get pods -n shree-seeds
+      kubectl get svc -n shree-seeds
+      kubectl get ingress -n shree-seeds
